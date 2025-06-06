@@ -1,5 +1,5 @@
 import { firebaseConfig } from '@/firebaseConfig';
-import { useAuth } from '@/hooks/useAuth';
+import useAuth from '@/hooks/useAuth';
 import { FirebaseRecaptchaVerifierModal } from 'expo-firebase-recaptcha';
 import { useRouter } from 'expo-router';
 import { ChevronLeft, Phone } from 'lucide-react-native';
@@ -23,8 +23,8 @@ export default function LoginScreen() {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  // Type recaptchaVerifier as React.RefObject<FirebaseRecaptchaVerifierModal>
-  const recaptchaVerifier = useRef<FirebaseRecaptchaVerifierModal>(null);
+  // ✅ Use correct ref type
+  const recaptchaVerifier = useRef<FirebaseRecaptchaVerifierModal>(null!);
 
   const handleLogin = async () => {
     if (!phoneNumber || phoneNumber.length < 9) {
@@ -37,7 +37,8 @@ export default function LoginScreen() {
         setError('Recaptcha not ready');
         return;
       }
-      await login(phoneNumber, recaptchaVerifier.current);
+
+      await login(phoneNumber, recaptchaVerifier);
       router.push('/(auth)/verify');
     } catch (err) {
       setError('Failed to login. Please try again.');
@@ -82,7 +83,7 @@ export default function LoginScreen() {
                   setPhoneNumber(text);
                   setError(null);
                 }}
-                maxLength={9} // Limit input to 9 digits after +250
+                maxLength={9}
               />
             </View>
             {error && <Text style={styles.errorText}>{error}</Text>}

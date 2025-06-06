@@ -1,4 +1,4 @@
-import { useAuth } from '@/hooks/useAuth';
+import useAuth from '@/hooks/useAuth';
 import { useRouter } from 'expo-router';
 import { Bell, ChevronRight, CreditCard, CircleHelp as HelpCircle, LogOut, Settings, Shield, User } from 'lucide-react-native';
 import { useState } from 'react';

@@ -1,5 +1,7 @@
-import { useAuth } from '@/hooks/useAuth';
-import { useRouter } from 'expo-router';
+import { firebaseConfig } from '@/firebaseConfig';
+import useAuth from '@/hooks/useAuth';
+import { FirebaseRecaptchaVerifierModal } from 'expo-firebase-recaptcha';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ChevronLeft } from 'lucide-react-native';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -19,35 +21,59 @@ const RESEND_COOLDOWN = 30;
 
 export default function VerifyScreen() {
   const router = useRouter();
+  const { phone, verificationId: initialVerificationId } = useLocalSearchParams<{
+    phone: string;
+    verificationId: string;
+  }>();
   const insets = useSafeAreaInsets();
-  const [otp, setOtp] = useState(['', '', '', '', '', '']); // ✅ Fixed: 6 digits
+
+  const [otp, setOtp] = useState(['', '', '', '', '', '']);
   const [countdown, setCountdown] = useState(RESEND_COOLDOWN);
   const [canResend, setCanResend] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const inputRefs = useRef<(TextInput | null)[]>([]);
-  const { verifyCode, resendCode } = useAuth();
+  const [verificationId, setVerificationId] = useState<string | null>(
+    initialVerificationId || null
+  );
+
+  const inputRefs = useRef<Array<TextInput | null>>([]);
+  const recaptchaVerifier = useRef<FirebaseRecaptchaVerifierModal>(null!);
+
+  const { verifyCode, resendCode, error } = useAuth();
 
   useEffect(() => {
-    if (countdown <= 0) {
-      setCanResend(true);
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      setCountdown((prev) => prev - 1);
+    const timer = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          setCanResend(true);
+          return 0;
+        }
+        return prev - 1;
+      });
     }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
-    return () => clearTimeout(timer);
-  }, [countdown]);
+  const handleResendOtp = async () => {
+    if (!canResend || !phone) return;
+
+    try {
+      if (!recaptchaVerifier.current) throw new Error('Recaptcha not ready');
+      const newVerificationId = await resendCode(recaptchaVerifier);
+      setVerificationId(newVerificationId);
+      setCountdown(RESEND_COOLDOWN);
+      setCanResend(false);
+      setOtp(['', '', '', '', '', '']);
+      inputRefs.current[0]?.focus();
+    } catch (err) {
+      console.error('Resend error:', err);
+    }
+  };
 
   const handleOtpChange = (text: string, index: number) => {
     if (!/^\d*$/.test(text)) return;
-
     const newOtp = [...otp];
     newOtp[index] = text;
     setOtp(newOtp);
-    setError(null);
-
     if (text.length === 1 && index < otp.length - 1) {
       inputRefs.current[index + 1]?.focus();
     }
@@ -62,89 +88,98 @@ export default function VerifyScreen() {
     }
   };
 
-  const handleResendOtp = async () => {
-    if (!canResend) return;
-
-    try {
-      await resendCode();
-      setCountdown(RESEND_COOLDOWN);
-      setCanResend(false);
-    } catch (err) {
-      setError('Failed to resend code. Try again.');
-    }
-  };
-
   const handleVerify = async () => {
-    const otpString = otp.join('');
+    if (!verificationId) {
+      console.warn('Verification ID missing');
+      return;
+    }
 
-    if (otpString.length !== 6) {
-      setError('Please enter the 6-digit code');
+    const otpString = otp.join('');
+    if (!/^\d{6}$/.test(otpString)) {
+      console.warn('Invalid OTP format');
       return;
     }
 
     try {
-      await verifyCode(otpString);
-      router.replace('/(tabs)'); // ✅ Use replace to prevent back
+      const user = await verifyCode(verificationId, otpString);
+
+      if (user) {
+        const { creationTime, lastSignInTime } = user.metadata;
+
+        const isNewUser = creationTime === lastSignInTime;
+        if (isNewUser) {
+          router.replace('/profileSetup'); // ✅
+        } else {
+          router.replace('/(tabs)');
+        }
+      }
     } catch (err) {
-      setError('Invalid code. Please try again.');
+      console.error('Verification failed:', err);
     }
   };
 
+  const errorText = error ? error : null;
+
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
-    >
-      <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-        <ChevronLeft size={24} color="#212529" />
-      </TouchableOpacity>
+    <>
+      <FirebaseRecaptchaVerifierModal
+        ref={recaptchaVerifier}
+        firebaseConfig={firebaseConfig}
+        attemptInvisibleVerification={true}
+      />
 
-      <View style={styles.headerContainer}>
-        <Text style={styles.headerTitle}>Verification</Text>
-        <Text style={styles.headerSubtitle}>
-          We have sent a verification code to your phone
-        </Text>
-      </View>
-
-      <View style={styles.otpContainer}>
-        {otp.map((digit, index) => (
-          <TextInput
-            key={index}
-            ref={(ref) => {
-              inputRefs.current[index] = ref;
-            }}
-            style={styles.otpInput}
-            value={digit}
-            onChangeText={(text) => handleOtpChange(text, index)}
-            onKeyPress={(e) => handleKeyPress(e, index)}
-            keyboardType="numeric"
-            maxLength={1}
-            selectTextOnFocus
-            returnKeyType="done"
-          />
-        ))}
-      </View>
-
-      {error && <Text style={styles.errorText}>{error}</Text>}
-
-      <TouchableOpacity
-        style={styles.resendContainer}
-        onPress={handleResendOtp}
-        disabled={!canResend}
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
       >
-        <Text style={[styles.resendText, !canResend && { opacity: 0.5 }]}>
-          {canResend ? 'Resend Code' : `Resend code in ${countdown}s`}
-        </Text>
-      </TouchableOpacity>
+        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+          <ChevronLeft size={24} color="#212529" />
+        </TouchableOpacity>
 
-      <TouchableOpacity
-        style={styles.verifyButton}
-        activeOpacity={0.8}
-        onPress={handleVerify}
-      >
-        <Text style={styles.verifyButtonText}>Verify</Text>
-      </TouchableOpacity>
-    </KeyboardAvoidingView>
+        <View style={styles.headerContainer}>
+          <Text style={styles.headerTitle}>Verification</Text>
+          <Text style={styles.headerSubtitle}>
+            We have sent a verification code to your phone
+          </Text>
+        </View>
+
+        <View style={styles.otpContainer}>
+          {otp.map((digit, index) => (
+            <TextInput
+              key={index}
+              ref={(ref: TextInput | null) => {
+                inputRefs.current[index] = ref;
+              }}
+              style={styles.otpInput}
+              value={digit}
+              onChangeText={(text) => handleOtpChange(text, index)}
+              onKeyPress={(e) => handleKeyPress(e, index)}
+              keyboardType="numeric"
+              maxLength={1}
+              selectTextOnFocus
+              returnKeyType="done"
+              autoFocus={index === 0}
+            />
+          ))}
+        </View>
+
+        {errorText && <Text style={styles.errorText}>{errorText}</Text>}
+
+        <TouchableOpacity
+          style={styles.resendContainer}
+          onPress={handleResendOtp}
+          disabled={!canResend}
+        >
+          <Text style={[styles.resendText, !canResend && { opacity: 0.5 }]}>
+            {canResend ? 'Resend Code' : `Resend code in ${countdown}s`}
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.verifyButton} activeOpacity={0.8} onPress={handleVerify}>
+          <Text style={styles.verifyButtonText}>Verify</Text>
+        </TouchableOpacity>
+      </KeyboardAvoidingView>
+    </>
   );
 }
 

@@ -1,4 +1,4 @@
-import { useAuth } from '@/hooks/useAuth';
+import useAuth from '@/hooks/useAuth';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { TriangleAlert as AlertTriangle, Bell, Car as CarIcon, Clock, MapPin } from 'lucide-react-native';
