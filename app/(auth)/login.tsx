@@ -1,7 +1,7 @@
-import { firebaseConfig } from '@/firebaseConfig';
-import useAuth from '@/hooks/useAuth';
+import { auth } from '@/firebaseConfig';
 import { FirebaseRecaptchaVerifierModal } from 'expo-firebase-recaptcha';
 import { useRouter } from 'expo-router';
+import { PhoneAuthProvider } from 'firebase/auth';
 import { ChevronLeft, Phone } from 'lucide-react-native';
 import { useRef, useState } from 'react';
 import {
@@ -19,29 +19,39 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 export default function LoginScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { login } = useAuth();
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const recaptchaVerifier = useRef<FirebaseRecaptchaVerifierModal>(null);
 
-  // ✅ Use correct ref type
-  const recaptchaVerifier = useRef<FirebaseRecaptchaVerifierModal>(null!);
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [errors, setErrors] = useState<{ phone?: string }>({});
+  const [loading, setLoading] = useState(false);
+
+  const validateForm = () => {
+    const newErrors: { phone?: string } = {};
+    if (!phoneNumber || phoneNumber.length < 9) newErrors.phone = 'Please enter a valid phone number';
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
 
   const handleLogin = async () => {
-    if (!phoneNumber || phoneNumber.length < 9) {
-      setError('Please enter a valid phone number');
-      return;
-    }
+    if (!validateForm()) return;
 
+    setLoading(true);
     try {
-      if (!recaptchaVerifier.current) {
-        setError('Recaptcha not ready');
-        return;
-      }
-
-      await login(phoneNumber, recaptchaVerifier);
-      router.push('/(auth)/verify');
-    } catch (err) {
-      setError('Failed to login. Please try again.');
+      const fullPhone = `+250${phoneNumber}`;
+      const provider = new PhoneAuthProvider(auth);
+      const id = await provider.verifyPhoneNumber(fullPhone, recaptchaVerifier.current!);
+      router.push({
+        pathname: '/(auth)/verify',
+        params: {
+          verificationId: id,
+          phone: fullPhone,
+        },
+      });
+    } catch (error) {
+      console.error('Error sending verification code:', error);
+      setErrors({ phone: 'Failed to send verification code. Try again.' });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -50,19 +60,20 @@ export default function LoginScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
     >
-      <FirebaseRecaptchaVerifierModal
-        ref={recaptchaVerifier}
-        firebaseConfig={firebaseConfig}
-      />
-
       <ScrollView contentContainerStyle={styles.scrollContent}>
+        <FirebaseRecaptchaVerifierModal
+          ref={recaptchaVerifier}
+          firebaseConfig={auth.app.options}
+          attemptInvisibleVerification={true}
+        />
+
         <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
           <ChevronLeft size={24} color="#212529" />
         </TouchableOpacity>
 
         <View style={styles.headerContainer}>
-          <Text style={styles.headerTitle}>Welcome Back</Text>
-          <Text style={styles.headerSubtitle}>Login to your account</Text>
+          <Text style={styles.headerTitle}>Login</Text>
+          <Text style={styles.headerSubtitle}>Access your Nyabona account</Text>
         </View>
 
         <View style={styles.formContainer}>
@@ -81,22 +92,27 @@ export default function LoginScreen() {
                 value={phoneNumber}
                 onChangeText={(text) => {
                   setPhoneNumber(text);
-                  setError(null);
+                  setErrors({ ...errors, phone: undefined });
                 }}
-                maxLength={9}
+                editable={!loading}
               />
             </View>
-            {error && <Text style={styles.errorText}>{error}</Text>}
+            {errors.phone && <Text style={styles.errorText}>{errors.phone}</Text>}
           </View>
 
-          <TouchableOpacity style={styles.loginButton} activeOpacity={0.8} onPress={handleLogin}>
-            <Text style={styles.loginButtonText}>Continue</Text>
+          <TouchableOpacity
+            style={[styles.loginButton, loading && { opacity: 0.7 }]}
+            activeOpacity={0.8}
+            onPress={handleLogin}
+            disabled={loading}
+          >
+            <Text style={styles.loginButtonText}>{loading ? 'Sending...' : 'Login'}</Text>
           </TouchableOpacity>
 
-          <View style={styles.signupContainer}>
-            <Text style={styles.signupText}>Do not have an account?</Text>
+          <View style={styles.registerContainer}>
+            <Text style={styles.registerText}>Don't have an account?</Text>
             <TouchableOpacity onPress={() => router.push('/(auth)/register')}>
-              <Text style={styles.signupLink}>Register</Text>
+              <Text style={styles.registerLink}>Register</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -106,14 +122,8 @@ export default function LoginScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-  },
-  scrollContent: {
-    flexGrow: 1,
-    paddingHorizontal: 24,
-  },
+  container: { flex: 1, backgroundColor: '#FFFFFF' },
+  scrollContent: { flexGrow: 1, paddingHorizontal: 24 },
   backButton: {
     marginTop: 16,
     width: 40,
@@ -123,9 +133,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#F8F9FA',
   },
-  headerContainer: {
-    marginTop: 32,
-  },
+  headerContainer: { marginTop: 32 },
   headerTitle: {
     fontFamily: 'Poppins-Bold',
     fontSize: 28,
@@ -137,12 +145,8 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#6C757D',
   },
-  formContainer: {
-    marginTop: 48,
-  },
-  inputGroup: {
-    marginBottom: 24,
-  },
+  formContainer: { marginTop: 48 },
+  inputGroup: { marginBottom: 24 },
   inputLabel: {
     fontFamily: 'Inter-Medium',
     fontSize: 14,
@@ -195,17 +199,17 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#FFFFFF',
   },
-  signupContainer: {
+  registerContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
     marginTop: 24,
   },
-  signupText: {
+  registerText: {
     fontFamily: 'Inter-Regular',
     fontSize: 14,
     color: '#6C757D',
   },
-  signupLink: {
+  registerLink: {
     fontFamily: 'Inter-Bold',
     fontSize: 14,
     color: '#5F2EEA',

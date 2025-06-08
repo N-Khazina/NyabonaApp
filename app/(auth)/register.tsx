@@ -20,6 +20,7 @@ export default function RegisterScreen() {
   const [verificationId, setVerificationId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+
   const validateForm = () => {
     const newErrors: { name?: string; phone?: string } = {};
     if (!name.trim()) newErrors.name = 'Name is required';

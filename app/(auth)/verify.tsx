@@ -108,7 +108,13 @@ export default function VerifyScreen() {
 
         const isNewUser = creationTime === lastSignInTime;
         if (isNewUser) {
-          router.replace('/profileSetup'); // ✅
+          router.replace({
+            pathname: '/profileSetup',
+            params: {
+              uid: user.uid,
+              phone: user.phoneNumber ?? '',
+            },
+          });
         } else {
           router.replace('/(tabs)');
         }

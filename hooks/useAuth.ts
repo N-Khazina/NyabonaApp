@@ -4,6 +4,7 @@ import {
   onAuthStateChanged,
   PhoneAuthProvider,
   signInWithCredential,
+  signOut,
   User,
 } from 'firebase/auth';
 import { useEffect, useState } from 'react';
@@ -64,6 +65,16 @@ const useAuth = () => {
     return id;
   };
 
+  const logout = async () => {
+    try {
+      await signOut(auth);
+      setUser(null);
+    } catch (err) {
+      console.error('Logout error:', err);
+      setError('Failed to log out.');
+    }
+  };
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (authUser) => {
       setUser(authUser);
@@ -77,7 +88,8 @@ const useAuth = () => {
     resendCode,
     user,
     error,
-    login: sendVerificationCode, // ✅ alias for login screen
+    login: sendVerificationCode, // alias for login screen
+    logout, // ✅ added logout here
   };
 };
 
