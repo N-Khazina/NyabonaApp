@@ -1,7 +1,15 @@
+import { db } from '@/firebaseConfig';
 import useAuth from '@/hooks/useAuth';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import { TriangleAlert as AlertTriangle, Bell, Car as CarIcon, Clock, MapPin } from 'lucide-react-native';
+import { collection, doc, getDoc, getDocs, limit, orderBy, query, where } from 'firebase/firestore';
+import {
+  TriangleAlert as AlertTriangle,
+  Bell,
+  Car as CarIcon,
+  Clock,
+  MapPin,
+} from 'lucide-react-native';
 import { useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -12,32 +20,48 @@ export default function HomeScreen() {
   const { user } = useAuth();
   const [activeRides, setActiveRides] = useState<any[]>([]);
   const [recentRides, setRecentRides] = useState<any[]>([]);
+  const [userName, setUserName] = useState<string>('Guest');
 
-  // Fetch user's active and recent rides
   useEffect(() => {
-    // Mock data for MVP
-    setActiveRides([]);
-    setRecentRides([
-      {
-        id: '1',
-        date: 'Yesterday',
-        driver: 'Emmanuel K.',
-        from: 'Remera, Kigali',
-        to: 'Nyamirambo, Kigali',
-        amount: 4500,
-        status: 'completed',
-      },
-      {
-        id: '2',
-        date: 'Last week',
-        driver: 'Jean Paul M.',
-        from: 'Kacyiru, Kigali',
-        to: 'Kimihurura, Kigali',
-        amount: 3200,
-        status: 'completed',
-      },
-    ]);
-  }, []);
+    const fetchRides = async () => {
+      if (!user?.uid) return;
+      try {
+        const q = query(
+          collection(db, 'rides'),
+          where('userId', '==', user.uid),
+          orderBy('createdAt', 'desc'),
+          limit(5)
+        );
+        const querySnapshot = await getDocs(q);
+        const rides = querySnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+
+        const active = rides.filter((r) => r.status === 'active');
+        const completed = rides.filter((r) => r.status === 'completed');
+
+        setActiveRides(active);
+        setRecentRides(completed);
+      } catch (err) {
+        console.error('Failed to fetch rides:', err);
+      }
+    };
+
+    const fetchUserName = async () => {
+      if (!user?.uid) return;
+      try {
+        const docRef = doc(db, 'users', user.uid);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          setUserName(data.name || 'Guest');
+        }
+      } catch (err) {
+        console.error('Failed to fetch user name:', err);
+      }
+    };
+
+    fetchRides();
+    fetchUserName();
+  }, [user]);
 
   const greeting = () => {
     const hour = new Date().getHours();
@@ -51,8 +75,7 @@ export default function HomeScreen() {
       <View style={styles.header}>
         <View>
           <Text style={styles.greeting}>{greeting()}</Text>
-          <Text style={styles.userName}>{user?.displayName || 'Guest'}</Text>
-
+          <Text style={styles.userName}>{userName}</Text>
         </View>
         <TouchableOpacity style={styles.notificationButton}>
           <Bell size={24} color="#212529" />
@@ -60,7 +83,7 @@ export default function HomeScreen() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView 
+      <ScrollView
         style={styles.scrollView}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
@@ -89,26 +112,20 @@ export default function HomeScreen() {
 
         <Text style={styles.sectionTitle}>Quick Actions</Text>
         <View style={styles.quickActionsContainer}>
-          <TouchableOpacity 
-            style={styles.quickActionCard}
-            onPress={() => router.push('/(tabs)/book')}
-          >
+          <TouchableOpacity style={styles.quickActionCard} onPress={() => router.push('/(tabs)/book')}>
             <View style={styles.quickActionIconContainer}>
               <MapPin size={24} color="#5F2EEA" />
             </View>
             <Text style={styles.quickActionText}>Book a Driver</Text>
           </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={styles.quickActionCard}
-            onPress={() => router.push('/(tabs)/rental')}
-          >
+
+          <TouchableOpacity style={styles.quickActionCard} onPress={() => router.push('/(tabs)/rental')}>
             <View style={styles.quickActionIconContainer}>
               <CarIcon size={24} color="#0FCCCE" />
             </View>
             <Text style={styles.quickActionText}>Rent a Car</Text>
           </TouchableOpacity>
-          
+
           <TouchableOpacity style={styles.quickActionCard}>
             <View style={[styles.quickActionIconContainer, { backgroundColor: 'rgba(255, 138, 0, 0.1)' }]}>
               <Clock size={24} color="#FF8A00" />
@@ -116,39 +133,34 @@ export default function HomeScreen() {
             <Text style={styles.quickActionText}>Schedule</Text>
           </TouchableOpacity>
         </View>
-        
-        {activeRides.length > 0 && (
-          <>
-            <Text style={styles.sectionTitle}>Active Ride</Text>
-            <View style={styles.activeRideCard}>
-              {/* Active ride content here */}
-            </View>
-          </>
+
+        {activeRides.length === 0 && (
+          <Text style={{ textAlign: 'center', marginTop: 16, color: '#6C757D' }}>
+            Plan your next trip today
+          </Text>
         )}
-        
+
         <Text style={styles.sectionTitle}>Recent Rides</Text>
         {recentRides.length > 0 ? (
           recentRides.map((ride) => (
             <View key={ride.id} style={styles.rideHistoryCard}>
               <View style={styles.rideHistoryHeader}>
-                <Text style={styles.rideDate}>{ride.date}</Text>
+                <Text style={styles.rideDate}>{ride.date || 'Recent'}</Text>
                 <Text style={styles.rideAmount}>{ride.amount} RWF</Text>
               </View>
-              
+
               <View style={styles.rideRoute}>
                 <View style={styles.routePointContainer}>
                   <View style={[styles.routePoint, styles.startPoint]} />
                   <Text style={styles.routeText}>{ride.from}</Text>
                 </View>
-                
                 <View style={styles.routeLine} />
-                
                 <View style={styles.routePointContainer}>
                   <View style={[styles.routePoint, styles.endPoint]} />
                   <Text style={styles.routeText}>{ride.to}</Text>
                 </View>
               </View>
-              
+
               <View style={styles.rideDriverContainer}>
                 <Text style={styles.driverLabel}>Driver:</Text>
                 <Text style={styles.driverName}>{ride.driver}</Text>

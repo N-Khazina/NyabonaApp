@@ -1,14 +1,14 @@
 import { Tabs } from 'expo-router';
-import { Car, Chrome as Home, Map, User } from 'lucide-react-native';
+import { Car, Chrome as Dashboard, User } from 'lucide-react-native';
 import { StyleSheet, useColorScheme } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-export default function TabLayout() {
+export default function DriverTabLayout() {
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
-  
+
   const isDark = colorScheme === 'dark';
-  
+
   return (
     <Tabs
       screenOptions={{
@@ -29,25 +29,16 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Home',
+          title: 'Dashboard',
           tabBarIcon: ({ color, size }) => (
-            <Home size={size} color={color} />
+            <Dashboard size={size} color={color} />
           ),
         }}
       />
       <Tabs.Screen
-        name="book"
+        name="trips"
         options={{
-          title: 'Book',
-          tabBarIcon: ({ color, size }) => (
-            <Map size={size} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="rental"
-        options={{
-          title: 'Rent Car',
+          title: 'Trips',
           tabBarIcon: ({ color, size }) => (
             <Car size={size} color={color} />
           ),

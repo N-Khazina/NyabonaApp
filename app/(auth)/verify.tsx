@@ -2,6 +2,7 @@ import { firebaseConfig } from '@/firebaseConfig';
 import useAuth from '@/hooks/useAuth';
 import { FirebaseRecaptchaVerifierModal } from 'expo-firebase-recaptcha';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { doc, getDoc, getFirestore } from 'firebase/firestore';
 import { ChevronLeft } from 'lucide-react-native';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -105,8 +106,8 @@ export default function VerifyScreen() {
 
       if (user) {
         const { creationTime, lastSignInTime } = user.metadata;
-
         const isNewUser = creationTime === lastSignInTime;
+
         if (isNewUser) {
           router.replace({
             pathname: '/profileSetup',
@@ -116,7 +117,20 @@ export default function VerifyScreen() {
             },
           });
         } else {
-          router.replace('/(tabs)');
+          const db = getFirestore();
+          const docRef = doc(db, 'users', user.uid);
+          const docSnap = await getDoc(docRef);
+
+          if (docSnap.exists()) {
+            const role = docSnap.data().role;
+            if (role === 'driver') {
+              router.replace('/drivertabs');
+            } else {
+              router.replace('/(tabs)');
+            }
+          } else {
+            router.replace('/profileSetup');
+          }
         }
       }
     } catch (err) {

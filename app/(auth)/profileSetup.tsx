@@ -153,8 +153,7 @@ export default function ProfileSetupScreen() {
       console.log('User profile saved successfully');
 
       if (role === 'client') router.push('/(tabs)');
-      else if (role === 'driver') router.push('/(tabs)/driverDashboard');
-      else if (role === 'admin') router.push('/(tabs)/adminDashboard');
+      else if (role === 'driver') router.push('/drivertabs');
     } catch (error) {
       console.error('Profile save error:', error);
       Alert.alert('Error', 'Something went wrong while saving your profile.');
@@ -287,7 +286,6 @@ export default function ProfileSetupScreen() {
                 <Picker.Item label="Select role..." value="" />
                 <Picker.Item label="Client" value="client" />
                 <Picker.Item label="Driver" value="driver" />
-                <Picker.Item label="Admin" value="admin" />
               </Picker>
             </View>
             {errors.role && <Text style={styles.errorText}>{errors.role}</Text>}
