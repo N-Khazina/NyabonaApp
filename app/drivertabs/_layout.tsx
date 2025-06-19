@@ -36,9 +36,9 @@ export default function DriverTabLayout() {
         }}
       />
       <Tabs.Screen
-        name="trips"
+        name="driverMapScreen"
         options={{
-          title: 'Trips',
+          title: 'Trip',
           tabBarIcon: ({ color, size }) => (
             <Car size={size} color={color} />
           ),

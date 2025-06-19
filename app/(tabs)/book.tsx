@@ -1,32 +1,50 @@
+// MODIFIED: BookScreen with driver matching, trip amount, and notification creation with accept/reject feature
 import { db } from '@/firebaseConfig';
 import useAuth from '@/hooks/useAuth';
 import * as Location from 'expo-location';
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
-import { ChevronLeft, MapPin, Navigation, X } from 'lucide-react-native';
-import { useEffect, useState } from 'react';
-import { Alert, FlatList, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+  addDoc,
+  collection,
+  getDocs,
+  query,
+  serverTimestamp,
+  where
+} from 'firebase/firestore';
+import { useEffect, useRef, useState } from 'react';
+import {
+  Alert,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
+} from 'react-native';
+import MapView, { LatLng, Marker, Polyline } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const MOCK_LOCATIONS = [
-  { id: '1', name: 'Kigali Convention Centre', address: 'KG 2 Roundabout, Kigali' },
-  { id: '2', name: 'Kigali International Airport', address: 'KK 15 Ave, Kigali' },
-];
+const GOOGLE_MAPS_API_KEY = 'AIzaSyCiXpzssUm4_XUC4FHX2A7ki5Ccub4SwL8';
 
 export default function BookScreen() {
   const insets = useSafeAreaInsets();
+  const mapRef = useRef<any>(null);
   const { user } = useAuth();
-  const [currentLocation, setCurrentLocation] = useState<any>(null);
-  const [destination, setDestination] = useState<any>(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<any[]>([]);
+
+  const [currentLocation, setCurrentLocation] = useState<LatLng | null>(null);
+  const [pickup, setPickup] = useState<LatLng | null>(null);
+  const [pickupAddress, setPickupAddress] = useState('');
+  const [destination, setDestination] = useState<LatLng | null>(null);
+  const [destinationAddress, setDestinationAddress] = useState('');
+  const [routeCoords, setRouteCoords] = useState<LatLng[]>([]);
+  const [selecting, setSelecting] = useState<'pickup' | 'destination'>('pickup');
+  const [distanceInKm, setDistanceInKm] = useState<number | null>(null);
 
   useEffect(() => {
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission Denied', 'Allow location access to continue.');
+        Alert.alert('Permission denied', 'Location access is required.');
         return;
       }
+
       const location = await Location.getCurrentPositionAsync({});
       setCurrentLocation({
         latitude: location.coords.latitude,
@@ -36,152 +54,225 @@ export default function BookScreen() {
   }, []);
 
   useEffect(() => {
-    if (searchQuery.length > 2) {
-      const filtered = MOCK_LOCATIONS.filter(location =>
-        location.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        location.address.toLowerCase().includes(searchQuery.toLowerCase())
-      );
-      setSearchResults(filtered);
-    } else {
-      setSearchResults([]);
-    }
-  }, [searchQuery]);
+    if (pickup && destination) fetchRoute();
+  }, [pickup, destination]);
 
-  const handleLocationSelect = (location: any) => {
-    setDestination({
-      name: location.name,
-      address: location.address,
-      latitude: currentLocation.latitude + (Math.random() - 0.5) * 0.01,
-      longitude: currentLocation.longitude + (Math.random() - 0.5) * 0.01,
-    });
-    setSearchQuery('');
-    setSearchResults([]);
+  const fetchRoute = async () => {
+    const origin = `${pickup?.latitude},${pickup?.longitude}`;
+    const dest = `${destination?.latitude},${destination?.longitude}`;
+
+    try {
+      const response = await fetch(
+        `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${dest}&key=${GOOGLE_MAPS_API_KEY}`
+      );
+      const data = await response.json();
+      if (data.routes.length) {
+        const points = decodePolyline(data.routes[0].overview_polyline.points);
+        setRouteCoords(points);
+
+        const meters = data.routes[0].legs[0].distance.value;
+        setDistanceInKm(meters / 1000);
+      } else {
+        setRouteCoords([]);
+      }
+    } catch (err) {
+      console.error('Route fetch error:', err);
+    }
   };
 
-  const handleRequestDriver = async () => {
-    if (!currentLocation || !destination || !user?.uid) {
-      Alert.alert('Missing Info', 'Make sure you selected a destination and are logged in.');
+  const decodePolyline = (t: string): LatLng[] => {
+    let points = [];
+    let index = 0, lat = 0, lng = 0;
+
+    while (index < t.length) {
+      let b, shift = 0, result = 0;
+      do {
+        b = t.charCodeAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      const dlat = ((result & 1) ? ~(result >> 1) : (result >> 1));
+      lat += dlat;
+
+      shift = 0;
+      result = 0;
+      do {
+        b = t.charCodeAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      const dlng = ((result & 1) ? ~(result >> 1) : (result >> 1));
+      lng += dlng;
+
+      points.push({ latitude: lat / 1e5, longitude: lng / 1e5 });
+    }
+    return points;
+  };
+
+  const reverseGeocode = async (coord: LatLng): Promise<string> => {
+    try {
+      const response = await fetch(
+        `https://maps.googleapis.com/maps/api/geocode/json?latlng=${coord.latitude},${coord.longitude}&key=${GOOGLE_MAPS_API_KEY}`
+      );
+      const data = await response.json();
+      return data.results[0]?.formatted_address || '';
+    } catch (error) {
+      console.error('Geocoding failed:', error);
+      return '';
+    }
+  };
+
+  const handleMapPress = async (e: any) => {
+    const coord = e.nativeEvent.coordinate;
+    if (selecting === 'pickup') {
+      setPickup(coord);
+      setRouteCoords([]);
+      const address = await reverseGeocode(coord);
+      setPickupAddress(address);
+      setSelecting('destination');
+    } else {
+      setDestination(coord);
+      const address = await reverseGeocode(coord);
+      setDestinationAddress(address);
+    }
+  };
+
+  const findNearestAvailableDriver = async (pickup: LatLng): Promise<{ uid: string; currentLocation: LatLng } | null> => {
+    const usersRef = collection(db, 'users');
+    const snapshot = await getDocs(query(usersRef, where('role', '==', 'driver'), where('available', '==', true)));
+    let nearestDriver: { uid: string; currentLocation: LatLng } | null = null;
+    let minDistance = Infinity;
+
+    snapshot.forEach((docSnap) => {
+      const data = docSnap.data();
+      const location = data.currentLocation;
+      if (location) {
+        const distance = Math.sqrt(
+          Math.pow(location.latitude - pickup.latitude, 2) +
+          Math.pow(location.longitude - pickup.longitude, 2)
+        );
+        if (distance < minDistance) {
+          minDistance = distance;
+          nearestDriver = { uid: docSnap.id, currentLocation: location };
+        }
+      }
+    });
+    return nearestDriver;
+  };
+
+  const handleConfirmBooking = async () => {
+    if (!pickup || !destination || !user?.uid || !distanceInKm) {
+      Alert.alert('Missing Info', 'Select pickup, destination and ensure route is calculated.');
       return;
     }
 
+    const nearestDriver = await findNearestAvailableDriver(pickup);
+    if (!nearestDriver) {
+      Alert.alert('No drivers', 'No available drivers found nearby.');
+      return;
+    }
+
+    const amount = parseFloat((distanceInKm * 500).toFixed(2));
+
     try {
-      await addDoc(collection(db, 'bookings'), {
+      const bookingRef = await addDoc(collection(db, 'bookings'), {
         userId: user.uid,
+        driverId: nearestDriver.uid,
         pickup: {
-          latitude: currentLocation.latitude,
-          longitude: currentLocation.longitude,
+          coordinates: pickup,
+          address: pickupAddress,
         },
         destination: {
-          name: destination.name,
-          address: destination.address,
-          latitude: destination.latitude,
-          longitude: destination.longitude,
+          coordinates: destination,
+          address: destinationAddress,
         },
+        distance: distanceInKm,
+        amount,
         status: 'pending',
         createdAt: serverTimestamp(),
       });
-      Alert.alert('Success', 'Driver request sent successfully!');
+
+      await addDoc(collection(db, 'notifications'), {
+        driverId: nearestDriver.uid,
+        message: `New trip from ${pickupAddress} to ${destinationAddress}`,
+        bookingId: bookingRef.id,
+        status: 'pending',
+        createdAt: serverTimestamp(),
+      });
+
+      Alert.alert('Booking Sent', `Waiting for driver confirmation. Estimated price: ${amount} RWF`);
+      setPickup(null);
+      setPickupAddress('');
       setDestination(null);
-    } catch (err) {
-      console.error('Booking failed:', err);
-      Alert.alert('Error', 'Could not send driver request. Try again later.');
+      setDestinationAddress('');
+      setRouteCoords([]);
+      setSelecting('pickup');
+    } catch (error) {
+      console.error('Booking error:', error);
+      Alert.alert('Error', 'Failed to create booking.');
     }
   };
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton}>
-          <ChevronLeft size={24} color="#212529" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Book a Driver</Text>
-        <View style={{ width: 40 }} />
+      <View style={styles.instructions}>
+        <Text style={styles.instructionsText}>
+          Tap on the map to select your pickup and destination locations.
+        </Text>
+        {pickupAddress ? <Text>Pickup: {pickupAddress}</Text> : null}
+        {destinationAddress ? <Text>Destination: {destinationAddress}</Text> : null}
+        {distanceInKm ? (
+          <Text>Distance: {distanceInKm.toFixed(2)} km</Text>
+        ) : null}
       </View>
 
-      <View style={styles.searchContainer}>
-        <View style={styles.inputContainer}>
-          <MapPin size={20} color="#5F2EEA" style={{ marginRight: 8 }} />
-          <TextInput
-            style={styles.input}
-            placeholder="Current Location"
-            editable={false}
-            value={currentLocation ? 'Current Location' : 'Getting location...'}
-          />
-        </View>
-
-        <View style={styles.inputContainer}>
-          <Navigation size={20} color="#FF8A00" style={{ marginRight: 8 }} />
-          <TextInput
-            style={styles.input}
-            placeholder="Where are you going?"
-            value={destination ? destination.name : searchQuery}
-            onChangeText={setSearchQuery}
-          />
-          {(searchQuery || destination) && (
-            <TouchableOpacity onPress={() => { setDestination(null); setSearchQuery(''); }}>
-              <X size={16} color="#6C757D" />
-            </TouchableOpacity>
+      {currentLocation && (
+        <MapView
+          ref={mapRef}
+          style={styles.map}
+          initialRegion={{
+            latitude: currentLocation.latitude,
+            longitude: currentLocation.longitude,
+            latitudeDelta: 0.05,
+            longitudeDelta: 0.05,
+          }}
+          onPress={handleMapPress}
+        >
+          {pickup && <Marker coordinate={pickup} title="Pickup" pinColor="green" />}
+          {destination && <Marker coordinate={destination} title="Destination" pinColor="red" />}
+          {routeCoords.length > 0 && (
+            <Polyline coordinates={routeCoords} strokeWidth={4} strokeColor="#5F2EEA" />
           )}
-        </View>
-
-        {searchResults.length > 0 && (
-          <FlatList
-            data={searchResults}
-            keyExtractor={(item) => item.id}
-            renderItem={({ item }) => (
-              <TouchableOpacity style={styles.resultItem} onPress={() => handleLocationSelect(item)}>
-                <Text>{item.name}</Text>
-                <Text style={{ color: '#6C757D' }}>{item.address}</Text>
-              </TouchableOpacity>
-            )}
-          />
-        )}
-      </View>
-
-      {destination && (
-        <TouchableOpacity style={styles.bookButton} onPress={handleRequestDriver}>
-          <Text style={styles.bookButtonText}>Request Driver</Text>
-        </TouchableOpacity>
+        </MapView>
       )}
+
+      <TouchableOpacity style={styles.confirmButton} onPress={handleConfirmBooking}>
+        <Text style={styles.confirmButtonText}>Confirm Booking</Text>
+      </TouchableOpacity>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#FFFFFF' },
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 24, paddingVertical: 16,
-    borderBottomWidth: 1, borderBottomColor: '#E9ECEF',
+  container: { flex: 1, backgroundColor: '#FFF' },
+  instructions: { padding: 16, backgroundColor: '#FFF' },
+  instructionsText: {
+    fontFamily: 'Inter-Regular',
+    fontSize: 14,
+    color: '#495057',
+    marginBottom: 8,
   },
-  backButton: {
-    width: 40, height: 40, borderRadius: 20,
-    backgroundColor: '#F8F9FA', justifyContent: 'center', alignItems: 'center',
+  map: { flex: 1 },
+  confirmButton: {
+    backgroundColor: '#5F2EEA',
+    margin: 24,
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: 'center',
   },
-  headerTitle: {
-    fontFamily: 'Poppins-SemiBold', fontSize: 18, color: '#212529',
-  },
-  searchContainer: {
-    padding: 16,
-  },
-  inputContainer: {
-    flexDirection: 'row', alignItems: 'center',
-    borderWidth: 1, borderColor: '#CED4DA', borderRadius: 8,
-    paddingHorizontal: 12, marginBottom: 12,
-  },
-  input: {
-    flex: 1, fontSize: 16, fontFamily: 'Inter-Regular', color: '#212529',
-  },
-  resultItem: {
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E9ECEF',
-  },
-  bookButton: {
-    backgroundColor: '#5F2EEA', margin: 24,
-    padding: 16, borderRadius: 12, alignItems: 'center',
-  },
-  bookButtonText: {
-    color: '#FFFFFF', fontSize: 16, fontFamily: 'Inter-Bold',
+  confirmButtonText: {
+    color: '#FFF',
+    fontSize: 16,
+    fontFamily: 'Inter-Bold',
   },
 });
