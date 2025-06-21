@@ -1,4 +1,3 @@
-// MODIFIED: BookScreen with driver matching, trip amount, and notification creation with accept/reject feature
 import { db } from '@/firebaseConfig';
 import useAuth from '@/hooks/useAuth';
 import * as Location from 'expo-location';
@@ -176,7 +175,7 @@ export default function BookScreen() {
 
     try {
       const bookingRef = await addDoc(collection(db, 'bookings'), {
-        userId: user.uid,
+        clientId: user.uid,
         driverId: nearestDriver.uid,
         pickup: {
           coordinates: pickup,
@@ -192,11 +191,18 @@ export default function BookScreen() {
         createdAt: serverTimestamp(),
       });
 
+      // Create notification with senderRole = 'client' (YOU REQUEST)
       await addDoc(collection(db, 'notifications'), {
-        driverId: nearestDriver.uid,
-        message: `New trip from ${pickupAddress} to ${destinationAddress}`,
+        clientId: user.uid,
+        driverId: nearestDriver.uid,        
         bookingId: bookingRef.id,
         status: 'pending',
+        read: false,
+        message: `New trip request from ${pickupAddress} to ${destinationAddress}`,
+        amount,
+        pickupAddress,
+        destinationAddress,
+        senderRole: 'client',               // <-- this differentiates who sent it
         createdAt: serverTimestamp(),
       });
 

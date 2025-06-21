@@ -1,77 +1,93 @@
 import { db } from '@/firebaseConfig';
 import useAuth from '@/hooks/useAuth';
-import { useNavigation, useRoute } from '@react-navigation/native';
 import * as Location from 'expo-location';
-import { addDoc, collection, doc, onSnapshot, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import {
+  addDoc,
+  collection,
+  doc,
+  onSnapshot,
+  serverTimestamp,
+  updateDoc,
+} from 'firebase/firestore';
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Button, StyleSheet, Text, View } from 'react-native';
 import MapView, { LatLng, Marker, Polyline } from 'react-native-maps';
 
 const GOOGLE_MAPS_APIKEY = 'AIzaSyCiXpzssUm4_XUC4FHX2A7ki5Ccub4SwL8';
 
-export default function DriverMapScreen() {
-  const route = useRoute();
-  const navigation = useNavigation();
-  const { user } = useAuth();
+/*************  ✨ Windsurf Command ⭐  *************/
+/**
+ * DriverMapScreen component provides an interactive map interface for drivers
+ * to manage their assigned trips. It tracks the driver's location, fetches
+ * routes, and updates trip status in real-time. The driver can notify the client
+ * of their status (on the way, picked up, arrived) via notifications. The component
+ * also displays the driver's current location, pickup and destination markers,
+ * and the route on the map.
+ */
 
-  // Expect tripId from navigation params
-  const { tripId } = route.params as { tripId: string };
+/*******  52b17bd9-01a8-45ba-9e14-b3dbeee2f5af  *******/
+export default function DriverMapScreen() {
+  const { user } = useAuth();
+  const router = useRouter();
+  const params = useLocalSearchParams();
+  const bookingId = params.bookingId as string | undefined;
 
   const [tripData, setTripData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [driverLocation, setDriverLocation] = useState<LatLng | null>(null);
   const [routeCoords, setRouteCoords] = useState<LatLng[]>([]);
+  const [routeLoading, setRouteLoading] = useState(false);
   const locationSubscription = useRef<Location.LocationSubscription | null>(null);
 
-  // Helper to send notification to client
   const sendNotificationToClient = async (message: string) => {
     if (!tripData?.clientId) return;
-
     try {
       await addDoc(collection(db, 'notifications'), {
         clientId: tripData.clientId,
         driverId: user?.uid,
-        tripId,
+        bookingId,
         message,
-        status: 'pending',
+        status: 'info',
         createdAt: serverTimestamp(),
+        read: false,
+        pickupAddress: tripData.pickup?.address || '',
+        destinationAddress: tripData.destination?.address || '',
+        amount: tripData.amount || 0,
+        senderRole: 'driver',
       });
     } catch (error) {
       console.error('Failed to send notification', error);
     }
   };
 
-  // Load trip data from Firestore
   useEffect(() => {
-    if (!tripId) {
-      Alert.alert('Error', 'No trip ID provided');
-      navigation.goBack();
+    if (!bookingId) {
+      Alert.alert('Error', 'No booking ID provided.');
+      router.back();
       return;
     }
 
-    const tripRef = doc(db, 'bookings', tripId);
-
+    const tripRef = doc(db, 'bookings', bookingId);
     const unsubscribe = onSnapshot(tripRef, (docSnap) => {
       if (docSnap.exists()) {
-        const data = docSnap.data();
-        setTripData(data);
+        setTripData(docSnap.data());
         setLoading(false);
       } else {
-        Alert.alert('Error', 'Trip not found');
-        navigation.goBack();
+        Alert.alert('Error', 'Booking not found');
+        router.back();
       }
     });
 
     return () => unsubscribe();
-  }, [tripId]);
+  }, [bookingId]);
 
-  // Request location permission and start location tracking
   useEffect(() => {
     const startTracking = async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission denied', 'Location permission is required to track your position.');
-        navigation.goBack();
+        Alert.alert('Permission denied', 'Location permission is required.');
+        router.back();
         return;
       }
 
@@ -79,21 +95,13 @@ export default function DriverMapScreen() {
         { accuracy: Location.Accuracy.High, distanceInterval: 10 },
         async (location) => {
           const { latitude, longitude } = location.coords;
-          setDriverLocation({ latitude, longitude });
+          const current = { latitude, longitude };
+          setDriverLocation(current);
 
-          // Update driver location in trip doc if status picked_up or enroute
           if (tripData && ['heading_to_pickup', 'picked_up'].includes(tripData.status)) {
-            try {
-              await updateDoc(doc(db, 'bookings', tripId), {
-                driverLocation: {
-                  latitude,
-                  longitude,
-                  updatedAt: serverTimestamp(),
-                },
-              });
-            } catch (error) {
-              console.error('Error updating driver location:', error);
-            }
+            await updateDoc(doc(db, 'bookings', bookingId!), {
+              driverLocation: { ...current, updatedAt: serverTimestamp() },
+            });
           }
         }
       );
@@ -108,7 +116,6 @@ export default function DriverMapScreen() {
     };
   }, [tripData?.status]);
 
-  // Fetch directions from driver location to pickup or destination
   useEffect(() => {
     const fetchRoute = async () => {
       if (!driverLocation || !tripData) return;
@@ -116,11 +123,9 @@ export default function DriverMapScreen() {
       let destinationCoords;
 
       if (tripData.status === 'accepted' || tripData.status === 'heading_to_pickup') {
-        // Route to pickup location
-        destinationCoords = tripData.pickup;
+        destinationCoords = tripData.pickup?.coordinates;
       } else if (tripData.status === 'picked_up') {
-        // Route to destination
-        destinationCoords = tripData.destination;
+        destinationCoords = tripData.destination?.coordinates;
       } else {
         setRouteCoords([]);
         return;
@@ -132,6 +137,7 @@ export default function DriverMapScreen() {
       const destination = `${destinationCoords.latitude},${destinationCoords.longitude}`;
 
       try {
+        setRouteLoading(true);
         const resp = await fetch(
           `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${destination}&key=${GOOGLE_MAPS_APIKEY}`
         );
@@ -139,31 +145,30 @@ export default function DriverMapScreen() {
         if (json.routes.length) {
           const points = decodePolyline(json.routes[0].overview_polyline.points);
           setRouteCoords(points);
+        } else {
+          console.warn('No routes found in response');
+          setRouteCoords([]);
         }
       } catch (error) {
         console.error('Failed to fetch directions', error);
+      } finally {
+        setRouteLoading(false);
       }
     };
 
     fetchRoute();
-  }, [driverLocation, tripData]);
+  }, [driverLocation, tripData?.status]);
 
-  // Decode Google polyline to LatLng[]
   const decodePolyline = (t: string, e = 5) => {
-    let points = [];
-    let index = 0,
-      lat = 0,
-      lng = 0;
-
+    let points = [], index = 0, lat = 0, lng = 0;
     while (index < t.length) {
-      let b, shift = 0,
-        result = 0;
+      let b, shift = 0, result = 0;
       do {
         b = t.charCodeAt(index++) - 63;
         result |= (b & 0x1f) << shift;
         shift += 5;
       } while (b >= 0x20);
-      let dlat = (result & 1) ? ~(result >> 1) : result >> 1;
+      const dlat = (result & 1) ? ~(result >> 1) : (result >> 1);
       lat += dlat;
 
       shift = 0;
@@ -173,7 +178,7 @@ export default function DriverMapScreen() {
         result |= (b & 0x1f) << shift;
         shift += 5;
       } while (b >= 0x20);
-      let dlng = (result & 1) ? ~(result >> 1) : result >> 1;
+      const dlng = (result & 1) ? ~(result >> 1) : (result >> 1);
       lng += dlng;
 
       points.push({ latitude: lat / 1e5, longitude: lng / 1e5 });
@@ -181,38 +186,31 @@ export default function DriverMapScreen() {
     return points;
   };
 
-  // Status update handlers
   const handleOnMyWay = async () => {
     try {
-      await updateDoc(doc(db, 'bookings', tripId), { status: 'heading_to_pickup' });
+      await updateDoc(doc(db, 'bookings', bookingId!), { status: 'heading_to_pickup' });
       await sendNotificationToClient('Driver is on the way to pick you up!');
-      Alert.alert('Status updated', 'You are on the way to pickup location.');
     } catch (error) {
       Alert.alert('Error', 'Failed to update status.');
-      console.error(error);
     }
   };
 
   const handlePickedUp = async () => {
     try {
-      await updateDoc(doc(db, 'bookings', tripId), { status: 'picked_up' });
+      await updateDoc(doc(db, 'bookings', bookingId!), { status: 'picked_up' });
       await sendNotificationToClient('Driver has picked you up. Trip started!');
-      Alert.alert('Status updated', 'Trip started.');
     } catch (error) {
       Alert.alert('Error', 'Failed to update status.');
-      console.error(error);
     }
   };
 
   const handleArrived = async () => {
     try {
-      await updateDoc(doc(db, 'bookings', tripId), { status: 'completed' });
+      await updateDoc(doc(db, 'bookings', bookingId!), { status: 'completed' });
       await sendNotificationToClient('Trip completed. Please proceed to payment.');
-      Alert.alert('Status updated', 'You have arrived at the destination.');
-      navigation.goBack();
+      router.back();
     } catch (error) {
       Alert.alert('Error', 'Failed to update status.');
-      console.error(error);
     }
   };
 
@@ -239,45 +237,32 @@ export default function DriverMapScreen() {
             longitudeDelta: 0.01,
           }}
         >
-          {/* Pickup Marker */}
-          {tripData.pickup?.latitude && tripData.pickup?.longitude && (
+          {tripData.pickup?.coordinates?.latitude && tripData.pickup?.coordinates?.longitude && (
             <Marker
-              coordinate={{ latitude: tripData.pickup.latitude, longitude: tripData.pickup.longitude }}
+              coordinate={tripData.pickup.coordinates}
               title="Pickup Location"
               pinColor="green"
             />
           )}
-
-          {/* Destination Marker */}
-          {tripData.destination?.latitude && tripData.destination?.longitude && (
+          {tripData.destination?.coordinates?.latitude && tripData.destination?.coordinates?.longitude && (
             <Marker
-              coordinate={{ latitude: tripData.destination.latitude, longitude: tripData.destination.longitude }}
+              coordinate={tripData.destination.coordinates}
               title="Destination"
               pinColor="red"
             />
           )}
-
-          {/* Route Polyline */}
-          {routeCoords.length > 0 && <Polyline coordinates={routeCoords} strokeWidth={4} strokeColor="#007AFF" />}
+          {routeCoords.length > 0 && (
+            <Polyline coordinates={routeCoords} strokeWidth={4} strokeColor="#007AFF" />
+          )}
         </MapView>
       )}
 
-      {/* Status & Action Buttons */}
       <View style={styles.statusContainer}>
         <Text style={styles.tripStatusText}>Trip Status: {tripData.status}</Text>
-
-        {tripData.status === 'accepted' && (
-          <Button title="On my way" onPress={handleOnMyWay} />
-        )}
-
-        {tripData.status === 'heading_to_pickup' && (
-          <Button title="Picked Up" onPress={handlePickedUp} />
-        )}
-
-        {tripData.status === 'picked_up' && (
-          <Button title="Arrived" onPress={handleArrived} />
-        )}
-
+        {routeLoading && <Text style={{ textAlign: 'center' }}>Fetching route...</Text>}
+        {tripData.status === 'accepted' && <Button title="On my way" onPress={handleOnMyWay} />}
+        {tripData.status === 'heading_to_pickup' && <Button title="Picked Up" onPress={handlePickedUp} />}
+        {tripData.status === 'picked_up' && <Button title="Arrived" onPress={handleArrived} />}
         {(tripData.status === 'completed' || tripData.status === 'cancelled') && (
           <Text style={{ textAlign: 'center', marginTop: 10 }}>
             Trip {tripData.status === 'completed' ? 'completed' : 'cancelled'}.

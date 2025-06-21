@@ -2,87 +2,191 @@ import { db } from '@/firebaseConfig';
 import useAuth from '@/hooks/useAuth';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import { collection, doc, getDoc, getDocs, limit, orderBy, query, where } from 'firebase/firestore';
+import {
+  collection,
+  doc,
+  getDoc,
+  onSnapshot,
+  orderBy,
+  query,
+  updateDoc,
+  where,
+} from 'firebase/firestore';
 import {
   TriangleAlert as AlertTriangle,
-  Bell,
-  Car as CarIcon,
-  Clock,
-  MapPin,
+  Bell
 } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import {
+  Alert,
+  FlatList,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const [activeRides, setActiveRides] = useState<any[]>([]);
-  const [recentRides, setRecentRides] = useState<any[]>([]);
+
+  const [recentTrips, setRecentTrips] = useState<any[]>([]);
+  const [notifications, setNotifications] = useState<any[]>([]);
   const [userName, setUserName] = useState<string>('Guest');
+  const [showNotifications, setShowNotifications] = useState<boolean>(false);
 
   useEffect(() => {
-    const fetchRides = async () => {
-      if (!user?.uid) return;
-      try {
-        const q = query(
-          collection(db, 'rides'),
-          where('userId', '==', user.uid),
-          orderBy('createdAt', 'desc'),
-          limit(5)
-        );
-        const querySnapshot = await getDocs(q);
-        const rides = querySnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    if (!user?.uid) return;
 
-        const active = rides.filter((r) => r.status === 'active');
-        const completed = rides.filter((r) => r.status === 'completed');
+    getDoc(doc(db, 'users', user.uid)).then((snap) => {
+      if (snap.exists()) setUserName(snap.data().name ?? 'Guest');
+    });
 
-        setActiveRides(active);
-        setRecentRides(completed);
-      } catch (err) {
-        console.error('Failed to fetch rides:', err);
+    const unsubscribeTrips = onSnapshot(
+      query(
+        collection(db, 'bookings'),
+        where('clientId', '==', user.uid),
+        orderBy('createdAt', 'desc')
+      ),
+      (snap) => {
+        const trips = snap.docs
+          .map((d) => {
+            const data = d.data();
+            return {
+              id: d.id,
+              pickup: data.pickup || {},
+              destination: data.destination || {},
+              status: data.status || '',
+              amount: data.amount || 0,
+              createdAt: data.createdAt,
+              driverName: data.driverName || '',
+            };
+          })
+          .filter((t) => t.status === 'completed');
+        setRecentTrips(trips);
       }
-    };
+    );
 
-    const fetchUserName = async () => {
-      if (!user?.uid) return;
-      try {
-        const docRef = doc(db, 'users', user.uid);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          setUserName(data.name || 'Guest');
-        }
-      } catch (err) {
-        console.error('Failed to fetch user name:', err);
+    const unsubscribeNotifications = onSnapshot(
+      query(
+        collection(db, 'notifications'),
+        where('clientId', '==', user.uid),
+        orderBy('createdAt', 'desc')
+      ),
+      (snap) => {
+        const nots = snap.docs.map((d) => ({
+          id: d.id,
+          ...(d.data() as any),
+        }));
+        setNotifications(nots);
+
+        nots.forEach((n) => {
+          if (!n.read) {
+            const msg = (n.message || '').toLowerCase();
+            if (msg.includes('accepted')) {
+              Alert.alert('Trip Accepted', n.message, [
+                {
+                  text: 'Track Driver',
+                  onPress: () =>
+                    router.push({
+                      pathname: '/clientMapScreen',
+                      params: { bookingId: n.bookingId },
+                    }),
+                },
+              ]);
+              markRead(n.id, n.read);
+            }
+            if (msg.includes('assigned to another driver')) {
+              Alert.alert('Trip Update', n.message);
+              markRead(n.id, n.read);
+            }
+          }
+        });
       }
-    };
+    );
 
-    fetchRides();
-    fetchUserName();
+    return () => {
+      unsubscribeTrips();
+      unsubscribeNotifications();
+    };
   }, [user]);
 
+  const markRead = async (id: string, current: boolean) => {
+    try {
+      await updateDoc(doc(db, 'notifications', id), { read: !current });
+    } catch (err) {
+      console.error('Failed update read flag:', err);
+    }
+  };
+
+  const renderNotification = ({ item }: { item: any }) => {
+    const isInfo = item.status === 'info';
+
+    return (
+      <TouchableOpacity
+        style={[
+          styles.notificationItem,
+          item.read && styles.notificationRead,
+          isInfo && styles.notificationInfo,
+        ]}
+        onPress={() => markRead(item.id, item.read)}
+      >
+        <Text style={styles.notificationMessage}>{item.message}</Text>
+        <Text style={styles.notificationTime}>
+          {item.createdAt
+            ? new Date(item.createdAt.seconds * 1000).toLocaleString()
+            : ''}
+        </Text>
+      </TouchableOpacity>
+    );
+  };
+
   const greeting = () => {
-    const hour = new Date().getHours();
-    if (hour < 12) return 'Good Morning';
-    if (hour < 18) return 'Good Afternoon';
-    return 'Good Evening';
+    const h = new Date().getHours();
+    return h < 12 ? 'Good Morning' : h < 18 ? 'Good Afternoon' : 'Good Evening';
   };
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
+      {/* HEADER */}
       <View style={styles.header}>
         <View>
           <Text style={styles.greeting}>{greeting()}</Text>
           <Text style={styles.userName}>{userName}</Text>
         </View>
-        <TouchableOpacity style={styles.notificationButton}>
+        <TouchableOpacity
+          style={styles.notificationButton}
+          onPress={() => setShowNotifications((prev) => !prev)}
+        >
           <Bell size={24} color="#212529" />
-          <View style={styles.notificationBadge} />
+          {notifications.length > 0 && (
+            <View style={styles.notificationBadge}>
+              <Text style={styles.badgeText}>{notifications.length}</Text>
+            </View>
+          )}
         </TouchableOpacity>
       </View>
 
+      {/* NOTIFICATIONS PANEL */}
+      {showNotifications && (
+        <View style={styles.notificationPanel}>
+          {notifications.length === 0 ? (
+            <Text style={styles.noNotificationsText}>No notifications</Text>
+          ) : (
+            <FlatList
+              data={notifications}
+              keyExtractor={(i) => i.id}
+              renderItem={renderNotification}
+              contentContainerStyle={{ paddingBottom: 10 }}
+            />
+          )}
+        </View>
+      )}
+
+      {/* MAIN CONTENT */}
       <ScrollView
         style={styles.scrollView}
         showsVerticalScrollIndicator={false}
@@ -112,76 +216,51 @@ export default function HomeScreen() {
 
         <Text style={styles.sectionTitle}>Quick Actions</Text>
         <View style={styles.quickActionsContainer}>
-          <TouchableOpacity style={styles.quickActionCard} onPress={() => router.push('/(tabs)/book')}>
-            <View style={styles.quickActionIconContainer}>
-              <MapPin size={24} color="#5F2EEA" />
-            </View>
-            <Text style={styles.quickActionText}>Book a Driver</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.quickActionCard} onPress={() => router.push('/(tabs)/rental')}>
-            <View style={styles.quickActionIconContainer}>
-              <CarIcon size={24} color="#0FCCCE" />
-            </View>
-            <Text style={styles.quickActionText}>Rent a Car</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.quickActionCard}>
-            <View style={[styles.quickActionIconContainer, { backgroundColor: 'rgba(255, 138, 0, 0.1)' }]}>
-              <Clock size={24} color="#FF8A00" />
-            </View>
-            <Text style={styles.quickActionText}>Schedule</Text>
-          </TouchableOpacity>
+          {/* Your existing quick action buttons */}
         </View>
 
-        {activeRides.length === 0 && (
-          <Text style={{ textAlign: 'center', marginTop: 16, color: '#6C757D' }}>
-            Plan your next trip today
-          </Text>
-        )}
-
-        <Text style={styles.sectionTitle}>Recent Rides</Text>
-        {recentRides.length > 0 ? (
-          recentRides.map((ride) => (
-            <View key={ride.id} style={styles.rideHistoryCard}>
+        <Text style={styles.sectionTitle}>Recent Trips</Text>
+        {recentTrips.length > 0 ? (
+          recentTrips.map((trip) => (
+            <View key={trip.id} style={styles.rideHistoryCard}>
               <View style={styles.rideHistoryHeader}>
-                <Text style={styles.rideDate}>{ride.date || 'Recent'}</Text>
-                <Text style={styles.rideAmount}>{ride.amount} RWF</Text>
+                <Text style={styles.rideDate}>
+                  {new Date(trip.createdAt.seconds * 1000).toLocaleString()}
+                </Text>
+                <Text style={styles.rideAmount}>{trip.amount} RWF</Text>
               </View>
-
               <View style={styles.rideRoute}>
                 <View style={styles.routePointContainer}>
                   <View style={[styles.routePoint, styles.startPoint]} />
-                  <Text style={styles.routeText}>{ride.from}</Text>
+                  <Text style={styles.routeText}>
+                    {trip.pickup.address || 'Unknown'}
+                  </Text>
                 </View>
                 <View style={styles.routeLine} />
                 <View style={styles.routePointContainer}>
                   <View style={[styles.routePoint, styles.endPoint]} />
-                  <Text style={styles.routeText}>{ride.to}</Text>
+                  <Text style={styles.routeText}>
+                    {trip.destination.address || 'Unknown'}
+                  </Text>
                 </View>
               </View>
-
               <View style={styles.rideDriverContainer}>
                 <Text style={styles.driverLabel}>Driver:</Text>
-                <Text style={styles.driverName}>{ride.driver}</Text>
+                <Text style={styles.driverName}>{trip.driverName}</Text>
               </View>
             </View>
           ))
         ) : (
           <View style={styles.emptyStateContainer}>
-            <Text style={styles.emptyStateText}>No recent rides</Text>
+            <Text style={styles.emptyStateText}>No recent trips</Text>
           </View>
         )}
       </ScrollView>
     </View>
   );
 }
-
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F8F9FA',
-  },
+  container: { flex: 1, backgroundColor: '#F8F9FA' },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -213,20 +292,58 @@ const styles = StyleSheet.create({
   },
   notificationBadge: {
     position: 'absolute',
-    top: 8,
-    right: 8,
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    top: 5,
+    right: 5,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
     backgroundColor: '#FF4757',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
   },
-  scrollView: {
-    flex: 1,
+  badgeText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: 'bold',
   },
-  scrollContent: {
-    paddingHorizontal: 24,
-    paddingBottom: 24,
+  notificationPanel: {
+    maxHeight: 200,
+    backgroundColor: 'white',
+    borderTopWidth: 1,
+    borderColor: '#ddd',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
   },
+  notificationItem: {
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderColor: '#eee',
+    backgroundColor: 'white',
+  },
+  notificationRead: {
+    backgroundColor: '#f0f0f0', // soft grey for read notifications
+  },
+  notificationMessage: {
+    fontFamily: 'Inter-Regular',
+    fontSize: 14,
+    color: '#212529',
+  },
+  notificationTime: {
+    fontFamily: 'Inter-Regular',
+    fontSize: 12,
+    color: '#6C757D',
+    marginTop: 4,
+  },
+  noNotificationsText: {
+    textAlign: 'center',
+    fontFamily: 'Inter-Regular',
+    fontSize: 14,
+    color: '#6C757D',
+    paddingVertical: 20,
+  },
+  scrollView: { flex: 1 },
+  scrollContent: { paddingHorizontal: 24, paddingBottom: 24 },
   emergencyCardContainer: {
     marginTop: 24,
     shadowColor: '#000',
@@ -243,14 +360,8 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 16,
   },
-  emergencyCardContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  emergencyTextContainer: {
-    marginLeft: 16,
-  },
+  emergencyCardContent: { flexDirection: 'row', alignItems: 'center', flex: 1 },
+  emergencyTextContainer: { marginLeft: 16 },
   emergencyTitle: {
     fontFamily: 'Inter-Bold',
     fontSize: 16,
@@ -312,16 +423,6 @@ const styles = StyleSheet.create({
     color: '#495057',
     textAlign: 'center',
   },
-  activeRideCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 4,
-  },
   rideHistoryCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
@@ -349,9 +450,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#212529',
   },
-  rideRoute: {
-    marginBottom: 16,
-  },
+  rideRoute: { marginBottom: 16 },
   routePointContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -363,12 +462,8 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     marginRight: 12,
   },
-  startPoint: {
-    backgroundColor: '#5F2EEA',
-  },
-  endPoint: {
-    backgroundColor: '#FF8A00',
-  },
+  startPoint: { backgroundColor: '#5F2EEA' },
+  endPoint: { backgroundColor: '#FF8A00' },
   routeLine: {
     width: 2,
     height: 24,
@@ -406,4 +501,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#6C757D',
   },
+   notificationInfo: {
+    backgroundColor: '#fff9db',
+    opacity: 0.85,
+  },
+
 });

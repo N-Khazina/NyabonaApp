@@ -1,5 +1,5 @@
 import { Tabs } from 'expo-router';
-import { Car, Chrome as Dashboard, User } from 'lucide-react-native';
+import { Chrome as Dashboard, User } from 'lucide-react-native';
 import { StyleSheet, useColorScheme } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -32,15 +32,6 @@ export default function DriverTabLayout() {
           title: 'Dashboard',
           tabBarIcon: ({ color, size }) => (
             <Dashboard size={size} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="driverMapScreen"
-        options={{
-          title: 'Trip',
-          tabBarIcon: ({ color, size }) => (
-            <Car size={size} color={color} />
           ),
         }}
       />
