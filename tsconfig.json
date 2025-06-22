@@ -11,16 +11,11 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
+    "types": ["node"],
     "paths": {
-      "@/*": [
-        "./*"
-      ]
+      "@/*": ["./*"]
     },
-    "customConditions": [
-      "import",
-      "require",
-      "react-native"
-    ]
+    "customConditions": ["import", "require", "react-native"]
   },
   "include": [
     "**/*.ts",

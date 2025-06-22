@@ -14,7 +14,7 @@ import {
 } from 'firebase/firestore';
 import {
   TriangleAlert as AlertTriangle,
-  Bell
+  Bell,
 } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
 import {
@@ -83,9 +83,11 @@ export default function HomeScreen() {
         }));
         setNotifications(nots);
 
+        // ✅ MODIFIED BLOCK START
         nots.forEach((n) => {
           if (!n.read) {
             const msg = (n.message || '').toLowerCase();
+
             if (msg.includes('accepted')) {
               Alert.alert('Trip Accepted', n.message, [
                 {
@@ -99,12 +101,37 @@ export default function HomeScreen() {
               ]);
               markRead(n.id, n.read);
             }
+
             if (msg.includes('assigned to another driver')) {
               Alert.alert('Trip Update', n.message);
               markRead(n.id, n.read);
             }
+
+            if (n.status === 'info' && msg.includes('trip completed')) {
+              const formattedAmount = `${n.amount} RWF`;
+              Alert.alert(
+                'Trip Completed',
+                `Trip completed. Please proceed to payment.\nAmount: ${formattedAmount}`,
+                [
+                  {
+                    text: 'Pay Now',
+                    onPress: () =>
+                      router.push({
+                        pathname: '/paymentScreen',
+                        params: {
+                          bookingId: n.bookingId,
+                          amount: String(n.amount),
+                        },
+                      }),
+                  },
+                  { text: 'Later', style: 'cancel' },
+                ]
+              );
+              markRead(n.id, n.read);
+            }
           }
         });
+        // ✅ MODIFIED BLOCK END
       }
     );
 
@@ -199,6 +226,7 @@ export default function HomeScreen() {
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 0 }}
           >
+
             <View style={styles.emergencyCardContent}>
               <AlertTriangle size={24} color="#FFFFFF" />
               <View style={styles.emergencyTextContainer}>
@@ -259,6 +287,7 @@ export default function HomeScreen() {
     </View>
   );
 }
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F8F9FA' },
   header: {
@@ -322,7 +351,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'white',
   },
   notificationRead: {
-    backgroundColor: '#f0f0f0', // soft grey for read notifications
+    backgroundColor: '#f0f0f0',
   },
   notificationMessage: {
     fontFamily: 'Inter-Regular',
@@ -501,9 +530,8 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#6C757D',
   },
-   notificationInfo: {
+  notificationInfo: {
     backgroundColor: '#fff9db',
     opacity: 0.85,
   },
-
 });
